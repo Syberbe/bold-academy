@@ -51,6 +51,7 @@ try:
         print('focus after collapse:', pg.evaluate('__bold.state.active.focus'), 'row done:', pg.evaluate('document.querySelector(\'[data-x="A.pikepush"]\').className'),
               'row moved px:', round(pg.evaluate('document.querySelector(\'[data-x="A.pikepush"]\').getBoundingClientRect().top') - y0))
         pg.screenshot(path=OUT + '08b_collapsed.png', full_page=False)
+        print('next row top after collapse:', pg.evaluate('(() => { const n = document.querySelector(".qitem:not(.done)"); const g = n.closest(".qgroup"); return [n.dataset.focus, Math.round(n.getBoundingClientRect().top), Math.round(g.getBoundingClientRect().top)]; })()'))
         nxt = pg.evaluate('document.querySelector(".qitem:not(.done)").dataset.focus')
         pg.click('[data-focus="' + nxt + '"]'); pg.wait_for_timeout(900)
         print('opened by choice:', nxt, pg.evaluate('__bold.state.active.focus'), 'card top:', round(pg.evaluate('document.querySelector("#focus").getBoundingClientRect().top')))
