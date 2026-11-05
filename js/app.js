@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.1.4';
+  const APP_VERSION = '0.2.0';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -554,7 +554,7 @@
       const ph = phases[i], k = clamp((tc - acc) / ph.d, 0, 1);
       const p = lerp(ph.a, ph.b, ph.fast ? easeOut(k) : ease(k));
       if (draw2d) draw2d(p, { cycle: cyc });
-      else if (v3) v3.draw(Pose3D.get(cur.ex.id).fn(p, bad));
+      else if (v3) v3.draw(Pose3D.get(cur.ex.id).fn(p, bad, { cycle: cyc }));
       if (i !== lastPh || force) {
         lastPh = i;
         if (!ph.quiet) {
