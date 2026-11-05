@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.1.2';
+  const APP_VERSION = '0.1.3';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -292,7 +292,7 @@
   function renderTrain() {
     if (!S.active || !dayById(S.active.day)) { S.active = null; renderPicker(); return; }
     const A = S.active, d = dayById(A.day), flat = flatItems(d), past = A.date < todayStr();
-    if (!flat.some(f => f.it.id === A.focus)) A.focus = flat[0] && flat[0].it.id;
+    if (A.focus && !flat.some(f => f.it.id === A.focus)) A.focus = null;
     let totalSets = 0, doneSets = 0;
     flat.forEach(f => { const e = entryFor(A.date, A.day, f.it); totalSets += f.it.sets; doneSets += Math.min(doneCount(e), f.it.sets); });
     const groups = [];
@@ -302,16 +302,20 @@
       '<div class="sess-meta"><input type="date" id="sess-date" max="' + todayStr() + '" value="' + A.date + '" aria-label="Datum van de training"><span id="setcount">' + doneSets + ' van ' + totalSets + ' sets</span>' + (past ? '' : '<span class="wake" id="wake-ind">Scherm blijft aan</span>') + '</div>' +
       (past ? '<p class="pastnote">Je vult een training van <b>' + esc(fmtD(A.date)) + '</b> in. De rusttimer start hier niet vanzelf.</p>' : '') +
       '<div class="progress"><i style="width:' + (totalSets ? Math.round(doneSets / totalSets * 100) : 0) + '%"></i></div>' +
-      '<article class="card" id="focus"></article>' +
-      '<div class="queue">' + groups.map(g => '<div class="qgroup"><h4>' + esc(g.name) + '<span>' + esc(g.sub) + '</span></h4>' + g.items.map(f => {
-        const e = entryFor(A.date, A.day, f.it);
-        return '<button type="button" class="qitem' + (f.it.id === A.focus ? ' cur' : '') + '" data-focus="' + esc(f.it.id) + '"><span class="code' + (f.kind === 'warmup' ? ' wu' : '') + '">' + esc(f.code) + '</span><span class="nm">' + esc(LIB[f.it.ex].name) + '</span><span class="dots">' + e.done.slice(0, f.it.sets).map(x => '<i' + (x ? ' class="f"' : '') + '></i>').join('') + '</span></button>';
-      }).join('') + '</div>').join('') + '</div>' +
+      '<div class="queue">' + groups.map(g => {
+        const allDone = g.items.every(f => doneCount(entryFor(A.date, A.day, f.it)) >= f.it.sets);
+        return '<div class="qgroup' + (allDone ? ' gdone' : '') + '"><h4>' + esc(g.name) + '<span>' + (allDone ? 'Gedaan' : esc(g.sub)) + '</span></h4>' + g.items.map(f => {
+          if (f.it.id === A.focus) return '<article class="card xopen" id="focus" data-x="' + esc(f.it.id) + '"></article>';
+          const e = entryFor(A.date, A.day, f.it), fin = doneCount(e) >= f.it.sets;
+          return '<button type="button" class="qitem' + (fin ? ' done' : '') + '" data-focus="' + esc(f.it.id) + '" data-x="' + esc(f.it.id) + '" aria-expanded="false"><span class="code' + (f.kind === 'warmup' ? ' wu' : '') + '">' + esc(f.code) + '</span><span class="nm">' + esc(LIB[f.it.ex].name) + '</span>' +
+            (fin ? '<span class="qok" aria-label="Gedaan">' + ICON.tick + '</span>' : '<span class="dots">' + e.done.slice(0, f.it.sets).map(x => '<i' + (x ? ' class="f"' : '') + '></i>').join('') + '</span>') + '</button>';
+        }).join('') + '</div>';
+      }).join('') + '</div>' +
       '<div class="btn-row"><button type="button" class="btn dark block" id="finish">' + (past ? 'Opslaan en sluiten' : 'Training afronden') + '</button></div>' +
       (getSess(A.date, A.day) ? (delSess ? '<div class="confirm"><p>Deze training van ' + esc(fmtD(A.date)) + ' en alle gelogde sets verwijderen?</p><div class="btn-row"><button type="button" class="btn danger" id="del-yes">Ja, verwijderen</button><button type="button" class="btn" id="del-no">Annuleren</button></div></div>'
         : '<div class="btn-row"><button type="button" class="btn small danger" id="del-sess">Training verwijderen</button></div>') : '') +
       '</section>';
-    renderFocus();
+    if (A.focus) renderFocus(); else viewer.detach();
     $('#sess-date').addEventListener('change', ev => {
       const nv = ev.target.value;
       if (!nv || nv > todayStr()) { ev.target.value = A.date; return; }
@@ -338,8 +342,8 @@
       const r = finish(); toast('Training verwijderd.'); go(r.back);
     });
     main.querySelector('.queue').addEventListener('click', ev => {
-      const b = ev.target.closest('[data-focus]'); if (!b) return;
-      A.focus = b.dataset.focus; save(); renderTrain(); $('#focus').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const b = ev.target.closest('[data-focus]'); if (b) { setOpen(b.dataset.focus, b.dataset.focus); return; }
+      const h = ev.target.closest('[data-close]'); if (h) setOpen(null, A.focus);
     });
   }
   let pickDate = null, delSess = false;
@@ -360,6 +364,47 @@
     const pt = $('#pick-today'); if (pt) pt.addEventListener('click', () => { pickDate = t; renderPicker(); });
   }
 
+  /* --- one exercise open at a time; the tapped row keeps its place on screen --- */
+  let collapseT = null;
+  function setOpen(id, anchorId) {
+    const A = S.active; if (!A) return;
+    clearTimeout(collapseT);
+    const sel = '[data-x="' + anchorId + '"]';
+    const before = anchorId ? main.querySelector(sel) : null, top0 = before ? before.getBoundingClientRect().top : null;
+    A.focus = id; save(); renderTrain();
+    const after = anchorId ? main.querySelector(sel) : null;
+    if (after && top0 != null) {
+      const delta = after.getBoundingClientRect().top - top0, de = document.documentElement;
+      const short = window.scrollY + delta - (de.scrollHeight - window.innerHeight);
+      if (short > 0) { const sp = document.createElement('div'); sp.className = 'spacer'; sp.style.height = Math.ceil(short) + 'px'; main.querySelector('.screen').appendChild(sp); }
+      window.scrollBy(0, delta);
+    }
+    if (id) {
+      const card = $('#focus'), tb = document.querySelector('.topbar');
+      if (card) {
+        const top = card.getBoundingClientRect().top, minTop = (tb ? tb.getBoundingClientRect().bottom : 0) + 10;
+        if (Math.abs(top - minTop) > 24) window.scrollBy({ top: top - minTop, behavior: REDUCE ? 'auto' : 'smooth' });
+      }
+    }
+  }
+  const REDUCE = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function refreshInPlace(f) {
+    const A = S.active, it = f.it, e = entryFor(A.date, A.day, it);
+    const now = e.done.slice(0, it.sets).indexOf(false);
+    $$('#sets .srow').forEach((row, i) => {
+      row.classList.toggle('done', !!e.done[i]); row.classList.toggle('now', i === now);
+      const t = row.querySelector('.tick'); if (t) t.setAttribute('aria-pressed', String(!!e.done[i]));
+      const o = row.querySelector('output'); if (o) o.textContent = e.sets[i] ?? 0;
+    });
+    const pill = $('#focus .xhead .pill');
+    if (pill) { pill.className = 'pill' + (now === -1 ? ' done' : ''); pill.textContent = now === -1 ? 'Klaar' : 'Set ' + (now + 1) + ' / ' + it.sets; }
+    let tot = 0, dn = 0;
+    flatItems(dayById(A.day)).forEach(x => { tot += x.it.sets; dn += Math.min(doneCount(entryFor(A.date, A.day, x.it)), x.it.sets); });
+    const sc = $('#setcount'); if (sc) sc.textContent = dn + ' van ' + tot + ' sets';
+    const pb = $('.progress i'); if (pb) pb.style.width = (tot ? Math.round(dn / tot * 100) : 0) + '%';
+    return now === -1;
+  }
+
   /* --- focus card --- */
   function tempoPhases(tempo, labels) {
     const v = tempo.split('-').map(Number), Lb = LABELS[labels] || LABELS.push;
@@ -375,7 +420,6 @@
     if (!f) { card.hidden = true; return; }
     const it = f.it, ex = LIB[it.ex], isWU = f.kind === 'warmup';
     const e = entryFor(A.date, A.day, it);
-    const flat = flatItems(d), idx = flat.indexOf(f);
     const pr = isWU ? null : progression(it, A.date);
     let target = '';
     if (pr) {
@@ -388,7 +432,7 @@
     const now = e.done.slice(0, it.sets).indexOf(false);
     const stats = isWU ? [['Sets', it.sets], ['Doel', it.target]] : [['Sets', it.sets], ['Reps', repsText(it)], ['Rust', restText(it.rest)], ['RIR', it.rir]];
     card.innerHTML =
-      '<div class="focus-head"><span class="code' + (isWU ? ' wu' : '') + '">' + esc(f.code) + '</span><h3 class="grow">' + esc(ex.name) + '<span class="mus">' + esc(ex.muscles || '') + '</span></h3><span class="pill' + (now === -1 ? ' done' : '') + '">' + (now === -1 ? 'Klaar' : 'Set ' + (now + 1) + ' / ' + it.sets) + '</span></div>' +
+      '<button type="button" class="focus-head xhead" data-close aria-expanded="true" aria-label="' + esc(ex.name) + ' dichtvouwen"><span class="code' + (isWU ? ' wu' : '') + '">' + esc(f.code) + '</span><span class="grow"><b class="xname">' + esc(ex.name) + '</b><span class="mus">' + esc(ex.muscles || '') + '</span></span><span class="pill' + (now === -1 ? ' done' : '') + '">' + (now === -1 ? 'Klaar' : 'Set ' + (now + 1) + ' / ' + it.sets) + '</span><span class="chev up" aria-hidden="true"></span></button>' +
       '<div class="stage" id="stage"></div>' +
       (ex.bad ? '<p class="badline" id="badline" hidden>Fout: ' + esc(ex.bad) + '</p>' : '') +
       (tv ? '<div class="tempo" aria-label="Tempo ' + esc(it.tempo) + '">' + tv.map((n, i) => '<div class="cell" data-cell="' + i + '"><b>' + esc(n) + '</b><span>' + esc(Lb.cells[i]) + '</span></div>').join('') + '</div>' : '') +
@@ -400,8 +444,7 @@
           '<span class="step"><button type="button" data-act="dec" aria-label="Set ' + (i + 1) + ': één rep minder">−</button><output>' + (e.sets[i] ?? 0) + '</output><button type="button" data-act="inc" aria-label="Set ' + (i + 1) + ': één rep meer">+</button></span><span class="unit">reps</span>') +
         '<button type="button" class="tick" data-act="tick" aria-pressed="' + (e.done[i] ? 'true' : 'false') + '" aria-label="Set ' + (i + 1) + ' klaar">' + ICON.tick + '</button></div>').join('') + '</div>' +
       (isWU ? '' : '<div class="btn-row"><button type="button" class="btn small" id="rest-btn">' + ICON.clock + '<span>Rust ' + restText(it.rest) + '</span></button></div>') +
-      '<details class="cues"><summary>Uitvoering</summary><ul>' + ex.cues.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' + (ex.note ? '<p>' + ex.note + '</p>' : '') + '</details>' +
-      '<div class="focus-nav"><button type="button" class="btn" id="fprev"' + (idx <= 0 ? ' disabled' : '') + '>' + ICON.prev + 'Vorige</button><button type="button" class="btn" id="fnext"' + (idx >= flat.length - 1 ? ' disabled' : '') + '>Volgende' + ICON.next + '</button></div>';
+      '<details class="cues"><summary>Uitvoering</summary><ul>' + ex.cues.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' + (ex.note ? '<p>' + ex.note + '</p>' : '') + '</details>';
     card.hidden = false;
     viewer.attach($('#stage'), it, ex, isWU);
     $('#sets').addEventListener('click', ev => {
@@ -409,8 +452,6 @@
       onSetAction(f, +b.closest('.srow').dataset.i, b.dataset.act);
     });
     const rb = $('#rest-btn'); if (rb) rb.addEventListener('click', () => { if (rest && rest.id === it.id) stopRest(); else startRest(it); });
-    $('#fprev').addEventListener('click', () => { const p = flat[idx - 1]; if (p) { A.focus = p.it.id; save(); renderTrain(); } });
-    $('#fnext').addEventListener('click', () => { const n = flat[idx + 1]; if (n) { A.focus = n.it.id; save(); renderTrain(); } });
     updateRestBtn();
   }
   function onSetAction(f, i, act) {
@@ -421,12 +462,14 @@
       e.done[i] = !e.done[i];
       if (e.done[i] && !(e.sets[i] >= 0) && it.repsMin != null) e.sets[i] = it.repsMin;
       commitEntry(A.date, A.day, it, e);
+      const complete = refreshInPlace(f);
+      clearTimeout(collapseT);
       if (e.done[i]) {
         if (f.kind === 'main' && A.date >= todayStr()) startRest(it);
-        const nxt = nextFocus(dayById(A.day), it.id);
-        if (nxt && nxt !== it.id) { A.focus = nxt; save(); renderTrain(); toast('Volgende: ' + LIB[findItem(dayById(A.day), nxt).it.ex].name); return; }
+        if (complete) collapseT = setTimeout(() => {
+          if (S.active === A && A.focus === it.id && route === 'train' && doneCount(entryFor(A.date, A.day, it)) >= it.sets) setOpen(null, it.id);
+        }, 700);
       }
-      renderTrain();
     } else {
       e.sets[i] = clamp((e.sets[i] ?? 0) + (act === 'inc' ? 1 : -1), 0, 99);
       const s = getSess(A.date, A.day);
@@ -444,17 +487,6 @@
     if (!(s && s.items[it.id]) && drafts[date + '|' + it.id]) return drafts[date + '|' + it.id];
     return _entryFor(date, dayId, it);
   };
-  function nextFocus(day, curId) {
-    const flat = flatItems(day), cur = flat.find(f => f.it.id === curId); if (!cur) return null;
-    const A = S.active, rem = it => it.sets - doneCount(entryFor(A.date, A.day, it));
-    if (cur.kind === 'main') {
-      const items = cur.block.items, idx = items.indexOf(cur.it);
-      for (let k = 1; k <= items.length; k++) { const it = items[(idx + k) % items.length]; if (rem(it) > 0) return it.id; }
-    } else if (rem(cur.it) > 0) return curId;
-    const start = flat.indexOf(cur);
-    for (let k = 1; k < flat.length; k++) { const f = flat[(start + k) % flat.length]; if (rem(f.it) > 0) return f.it.id; }
-    return curId;
-  }
 
   /* --- viewer (3D or 2D fallback), one instance --- */
   const viewer = (function () {
