@@ -1,0 +1,7 @@
+dist/
+preview/
+test/out/
+tmp/
+migrate/
+__pycache__/
+*logboek-import*.json
