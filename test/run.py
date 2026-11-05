@@ -41,6 +41,20 @@ try:
         pg.click('#sets .srow[data-i="0"] [data-act=inc]'); pg.click('#sets .srow[data-i="0"] [data-act=tick]'); pg.wait_for_timeout(600)
         print('focus after tick:', pg.evaluate('__bold.state.active.focus'), 'rest visible:', pg.evaluate('!document.getElementById("restbar").hidden'))
         pg.screenshot(path=OUT + '08_after_tick.png', full_page=False)
+        # alle sets van de oefening afvinken -> dichtvouwen, niet naar een andere oefening springen
+        pg.screenshot(path=OUT + '08a_before_complete.png', full_page=False)
+        while pg.locator('#sets .srow:not(.done) [data-act=tick]').count():
+            pg.locator('#sets .srow:not(.done) [data-act=tick]').first.click(); pg.wait_for_timeout(150)
+        y0 = pg.evaluate('document.querySelector("#focus").getBoundingClientRect().top')
+        print('focus right after last set:', pg.evaluate('__bold.state.active.focus'))
+        pg.wait_for_timeout(1000)
+        print('focus after collapse:', pg.evaluate('__bold.state.active.focus'), 'row done:', pg.evaluate('document.querySelector(\'[data-x="A.pikepush"]\').className'),
+              'row moved px:', round(pg.evaluate('document.querySelector(\'[data-x="A.pikepush"]\').getBoundingClientRect().top') - y0))
+        pg.screenshot(path=OUT + '08b_collapsed.png', full_page=False)
+        nxt = pg.evaluate('document.querySelector(".qitem:not(.done)").dataset.focus')
+        pg.click('[data-focus="' + nxt + '"]'); pg.wait_for_timeout(900)
+        print('opened by choice:', nxt, pg.evaluate('__bold.state.active.focus'), 'card top:', round(pg.evaluate('document.querySelector("#focus").getBoundingClientRect().top')))
+        pg.screenshot(path=OUT + '08c_opened.png', full_page=False)
         print('pikepush entry:', pg.evaluate('JSON.stringify(__bold.state.sessions["2026-11-05|A"].items["A.pikepush"])'))
         # history
         pg.click('[data-tab=hist]'); pg.wait_for_timeout(400)
