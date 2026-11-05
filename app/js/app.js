@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.1.0';
+  const APP_VERSION = '0.1.1';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -251,7 +251,7 @@
           chips.push('<span class="chip missed" title="Verschoven naar ' + esc(fmtD(o.eff)) + '">' + esc(o.day) + '</span>');
         }
       });
-      const act = acts.filter(a => a.weekday === wdOf(d)).map(a => esc(a.name)).join(', ');
+      const act = acts.filter(a => a.weekday === wdOf(d) && a.name.trim()).map(a => esc(a.name.trim())).join(', ');
       strip.push('<div class="wd' + (d === t ? ' today' : '') + '"><span class="dn">' + WD_S[wdOf(d)] + '</span><span class="dd">' + parseD(d).getDate() + '</span>' + chips.join('') + (act ? '<span class="act">' + act + '</span>' : '') + '</div>');
     }
     const movedNotes = pl.occ.filter(o => o.status === 'moved' && o.eff >= t).map(o => '<b>' + esc(dayById(o.day).name) + '</b> van ' + fmtD(o.planned) + ' → ' + fmtD(o.eff));
@@ -635,8 +635,8 @@
       P.days.map(d => dayEditor(d, conf)).join('') +
       '<div class="btn-row"><button type="button" class="btn" data-act="add-day">' + ICON.plus + 'Dag toevoegen</button></div>' +
       '<h2 class="sec-title">Vaste activiteiten</h2>' +
-      '<div class="card"><p class="note-line">Ze staan in je weekoverzicht, maar een gemiste training schuift er gewoon naartoe.</p>' +
-      (P.activities || []).map((a, i) => '<div class="actrow' + (i ? ' nolab' : '') + '"><div class="field"><label for="a-wd-' + i + '">Dag</label><select id="a-wd-' + i + '" data-f="a.weekday" data-i="' + i + '">' + wdOptions(a.weekday) + '</select></div><div class="field"><label for="a-nm-' + i + '">Activiteit</label><input id="a-nm-' + i + '" data-f="a.name" data-i="' + i + '" value="' + esc(a.name) + '"></div><button type="button" class="iconbtn del" data-act="del-act" data-i="' + i + '" aria-label="Activiteit verwijderen">' + ICON.del + '</button></div>').join('') +
+      '<div class="card"><p class="note-line">' + ((P.activities || []).length ? 'Ze staan in je weekoverzicht, maar een gemiste training schuift er gewoon naartoe.' : 'Sport je ook buiten dit schema, zoals boulderen of een sessie met je PT? Zet het hier, dan zie je het in je weekoverzicht.') + '</p>' +
+      (P.activities || []).map((a, i) => '<div class="actrow' + (i ? ' nolab' : '') + '"><div class="field"><label for="a-wd-' + i + '">Dag</label><select id="a-wd-' + i + '" data-f="a.weekday" data-i="' + i + '">' + wdOptions(a.weekday) + '</select></div><div class="field"><label for="a-nm-' + i + '">Activiteit</label><input id="a-nm-' + i + '" data-f="a.name" data-i="' + i + '" value="' + esc(a.name) + '" placeholder="bv. Boulderen"></div><button type="button" class="iconbtn del" data-act="del-act" data-i="' + i + '" aria-label="Activiteit verwijderen">' + ICON.del + '</button></div>').join('') +
       '<div class="btn-row"><button type="button" class="btn small" data-act="add-act">' + ICON.plus + 'Activiteit toevoegen</button></div></div>' +
       '<h2 class="sec-title">App</h2>' +
       '<div class="card">' +
@@ -648,8 +648,8 @@
       '<input type="file" id="imp" accept="application/json,.json" hidden>' +
       (importBox ? importBox : '') +
       '</div>' +
-      '<div class="card"><div><b>Schema van de coach</b><p class="note-line">Zet het schema terug zoals je het van je coach kreeg. Je logboek blijft bewaard.</p></div>' +
-      conf('reset', 'Je huidige schema wordt vervangen door het originele schema van de coach.', 'reset-yes') +
+      '<div class="card"><div><b>Schema van de coach</b><p class="note-line">Zet het schema terug zoals je het van je coach kreeg. Je logboek en vaste activiteiten blijven bewaard.</p></div>' +
+      conf('reset', 'Je huidige schema wordt vervangen door het originele schema van de coach. Je vaste activiteiten blijven staan.', 'reset-yes') +
       (confirmBox && confirmBox.kind === 'reset' ? '' : '<div class="btn-row"><button type="button" class="btn danger" data-act="reset">Schema terugzetten</button></div>') + '</div>' +
       '<p class="note-line">BOLD Academy ' + APP_VERSION + '</p>' +
       '</section>';
@@ -757,10 +757,10 @@
     else if (act === 'add-day') { const used = P.days.map(x => x.id); const id = 'ABCDEFGHIJ'.split('').find(c => !used.includes(c)) || ('D' + rid()); openDays.add(id); P.days.push({ id, name: 'Full Body ' + id, weekday: 3, warmup: [], blocks: [{ label: 'A', items: [] }] }); }
     else if (act === 'del-day') { confirmBox = { kind: 'del-day', day: d.id }; }
     else if (act === 'del-day-yes') { P.days = P.days.filter(x => x.id !== b.dataset.day); if (S.active && S.active.day === b.dataset.day) S.active = null; confirmBox = null; }
-    else if (act === 'add-act') { (P.activities = P.activities || []).push({ weekday: 3, name: 'Activiteit' }); }
+    else if (act === 'add-act') { (P.activities = P.activities || []).push({ weekday: 1, name: '' }); }
     else if (act === 'del-act') { P.activities.splice(+b.dataset.i, 1); }
     else if (act === 'reset') { confirmBox = { kind: 'reset' }; }
-    else if (act === 'reset-yes') { S.program = clone(DEFAULT_PROGRAM); S.active = null; confirmBox = null; toast('Schema van de coach teruggezet.'); }
+    else if (act === 'reset-yes') { const acts = S.program.activities || []; S.program = clone(DEFAULT_PROGRAM); S.program.activities = acts; S.active = null; confirmBox = null; toast('Schema van de coach teruggezet.'); }
     else if (act === 'cancel') { confirmBox = null; importBox = ''; pendingImport = null; }
     else if (act === 'export') { exportBackup(); return; }
     else if (act === 'import') { $('#imp').click(); return; }

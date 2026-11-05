@@ -57,6 +57,14 @@ try:
         pg.click('[data-act=del-day][data-day=C]'); pg.wait_for_timeout(200)
         print('confirm visible:', pg.evaluate('!!document.querySelector("[data-act=del-day-yes][data-day=C]")'))
         pg.click('[data-act=cancel]'); pg.wait_for_timeout(200)
+        # vaste activiteit zelf toevoegen
+        print('activities default:', pg.evaluate('JSON.stringify(__bold.state.program.activities)'))
+        pg.click('[data-act=add-act]'); pg.wait_for_timeout(200)
+        pg.fill('#a-nm-0', 'Boulderen'); pg.dispatch_event('#a-nm-0', 'change'); pg.wait_for_timeout(200)
+        pg.locator('.actrow').first.screenshot(path=OUT + '10c_activity.png')
+        pg.click('[data-tab=today]'); pg.wait_for_timeout(300)
+        print('strip activity:', pg.evaluate('[...document.querySelectorAll(".wd .act")].map(e=>e.textContent)'))
+        pg.click('[data-tab=plan]'); pg.wait_for_timeout(300)
         # offline reload test
         pg.wait_for_timeout(800)
         print('sw controller:', pg.evaluate('!!navigator.serviceWorker.controller'))

@@ -768,20 +768,7 @@
    ]
   }
  ],
- "activities": [
-  {
-   "weekday": 1,
-   "name": "Boulderen"
-  },
-  {
-   "weekday": 2,
-   "name": "PT"
-  },
-  {
-   "weekday": 6,
-   "name": "Boulderen"
-  }
- ],
+ "activities": [],
  "notes": [
   "Progressive overload: probeer wekelijks een rep extra met correcte vorm.",
   "Rep range: haal je makkelijk het hoogste aantal, maak de oefening dan moeilijker: trager tempo, ringen verder uit elkaar of lager, of gewicht erbij.",
