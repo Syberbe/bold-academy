@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.1.1';
+  const APP_VERSION = '0.1.2';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -278,7 +278,7 @@
   }
   main.addEventListener('click', e => {
     const g = e.target.closest('[data-go]'); if (g) { if (g.dataset.go === 'train' && !S.active) { route = 'train'; render(); return; } go(g.dataset.go); return; }
-    const st = e.target.closest('[data-start]'); if (st) { startSession(st.dataset.start, todayStr()); }
+    const st = e.target.closest('[data-start]'); if (st) { startSession(st.dataset.start, st.dataset.date || todayStr()); }
   });
 
   /* ---------------- TRAINING ---------------- */
@@ -291,7 +291,7 @@
   }
   function renderTrain() {
     if (!S.active || !dayById(S.active.day)) { S.active = null; renderPicker(); return; }
-    const A = S.active, d = dayById(A.day), flat = flatItems(d);
+    const A = S.active, d = dayById(A.day), flat = flatItems(d), past = A.date < todayStr();
     if (!flat.some(f => f.it.id === A.focus)) A.focus = flat[0] && flat[0].it.id;
     let totalSets = 0, doneSets = 0;
     flat.forEach(f => { const e = entryFor(A.date, A.day, f.it); totalSets += f.it.sets; doneSets += Math.min(doneCount(e), f.it.sets); });
@@ -299,36 +299,65 @@
     flat.forEach(f => { let g = groups.find(x => x.name === f.group); if (!g) groups.push(g = { name: f.group, sub: f.kind === 'warmup' ? 'geen rust' : restText(f.it.rest) + ' rust', items: [] }); g.items.push(f); });
     main.innerHTML = '<section class="screen">' +
       '<div class="sess-head"><div style="flex:1;min-width:0"><p class="h-eyebrow">Dag ' + esc(d.id) + ' · week ' + clamp(weekNo(A.date), 1, S.program.weeks) + '</p><h1 class="h-title">' + esc(d.name) + '</h1></div></div>' +
-      '<div class="sess-meta"><input type="date" id="sess-date" value="' + A.date + '" aria-label="Datum van de training"><span id="setcount">' + doneSets + ' van ' + totalSets + ' sets</span><span class="wake" id="wake-ind">Scherm blijft aan</span></div>' +
+      '<div class="sess-meta"><input type="date" id="sess-date" max="' + todayStr() + '" value="' + A.date + '" aria-label="Datum van de training"><span id="setcount">' + doneSets + ' van ' + totalSets + ' sets</span>' + (past ? '' : '<span class="wake" id="wake-ind">Scherm blijft aan</span>') + '</div>' +
+      (past ? '<p class="pastnote">Je vult een training van <b>' + esc(fmtD(A.date)) + '</b> in. De rusttimer start hier niet vanzelf.</p>' : '') +
       '<div class="progress"><i style="width:' + (totalSets ? Math.round(doneSets / totalSets * 100) : 0) + '%"></i></div>' +
       '<article class="card" id="focus"></article>' +
       '<div class="queue">' + groups.map(g => '<div class="qgroup"><h4>' + esc(g.name) + '<span>' + esc(g.sub) + '</span></h4>' + g.items.map(f => {
         const e = entryFor(A.date, A.day, f.it);
         return '<button type="button" class="qitem' + (f.it.id === A.focus ? ' cur' : '') + '" data-focus="' + esc(f.it.id) + '"><span class="code' + (f.kind === 'warmup' ? ' wu' : '') + '">' + esc(f.code) + '</span><span class="nm">' + esc(LIB[f.it.ex].name) + '</span><span class="dots">' + e.done.slice(0, f.it.sets).map(x => '<i' + (x ? ' class="f"' : '') + '></i>').join('') + '</span></button>';
       }).join('') + '</div>').join('') + '</div>' +
-      '<div class="btn-row"><button type="button" class="btn dark block" id="finish">Training afronden</button></div>' +
+      '<div class="btn-row"><button type="button" class="btn dark block" id="finish">' + (past ? 'Opslaan en sluiten' : 'Training afronden') + '</button></div>' +
+      (getSess(A.date, A.day) ? (delSess ? '<div class="confirm"><p>Deze training van ' + esc(fmtD(A.date)) + ' en alle gelogde sets verwijderen?</p><div class="btn-row"><button type="button" class="btn danger" id="del-yes">Ja, verwijderen</button><button type="button" class="btn" id="del-no">Annuleren</button></div></div>'
+        : '<div class="btn-row"><button type="button" class="btn small danger" id="del-sess">Training verwijderen</button></div>') : '') +
       '</section>';
     renderFocus();
-    $('#sess-date').addEventListener('change', ev => { if (ev.target.value) { A.date = ev.target.value; save(); renderTrain(); } });
+    $('#sess-date').addEventListener('change', ev => {
+      const nv = ev.target.value;
+      if (!nv || nv > todayStr()) { ev.target.value = A.date; return; }
+      if (nv === A.date) return;
+      const old = getSess(A.date, A.day), tgt = getSess(nv, A.day);
+      if (old && !tgt) { delete S.sessions[skey(A.date, A.day)]; old.date = nv; S.sessions[skey(nv, A.day)] = old; toast('Training verplaatst naar ' + fmtD(nv) + '.'); }
+      else if (tgt) toast('Op ' + fmtD(nv) + ' staat al een ' + d.name + '. Die zie je nu.');
+      A.date = nv; delSess = false; stopRest(); save(); renderTrain(); syncWake();
+    });
+    const finish = () => {
+      const s = getSess(A.date, A.day), back = A.from === 'hist' ? 'hist' : 'today';
+      S.active = null; pickDate = null; delSess = false; saveNow(); stopRest();
+      return { s, back };
+    };
     $('#finish').addEventListener('click', () => {
-      const s = getSess(A.date, A.day);
-      S.active = null; saveNow(); stopRest();
-      toast(sessHasDone(s) ? 'Training opgeslagen in je logboek.' : 'Training gesloten. Er was nog niets gelogd.');
-      go('today');
+      const r = finish();
+      toast(sessHasDone(r.s) ? 'Training opgeslagen in je logboek.' : 'Training gesloten. Er was nog niets gelogd.');
+      go(r.back);
+    });
+    const ds = $('#del-sess'); if (ds) ds.addEventListener('click', () => { delSess = true; renderTrain(); $('#del-yes').scrollIntoView({ block: 'center' }); });
+    const dn = $('#del-no'); if (dn) dn.addEventListener('click', () => { delSess = false; renderTrain(); });
+    const dy = $('#del-yes'); if (dy) dy.addEventListener('click', () => {
+      delete S.sessions[skey(A.date, A.day)];
+      const r = finish(); toast('Training verwijderd.'); go(r.back);
     });
     main.querySelector('.queue').addEventListener('click', ev => {
       const b = ev.target.closest('[data-focus]'); if (!b) return;
       A.focus = b.dataset.focus; save(); renderTrain(); $('#focus').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
+  let pickDate = null, delSess = false;
   function renderPicker() {
     const t = todayStr(), pl = plan(t);
-    const sug = pl.occ.filter(o => o.eff === t && (o.status === 'todo' || o.status === 'moved')).map(o => o.day);
-    main.innerHTML = '<section class="screen"><div><p class="h-eyebrow">' + esc(fmtD(t)) + '</p><h1 class="h-title">Kies je <em>training</em></h1></div>' +
+    if (!pickDate || pickDate > t) pickDate = t;
+    const past = pickDate < t;
+    const sug = past ? [] : pl.occ.filter(o => o.eff === t && (o.status === 'todo' || o.status === 'moved')).map(o => o.day);
+    main.innerHTML = '<section class="screen"><div><p class="h-eyebrow">' + esc(fmtD(pickDate)) + '</p><h1 class="h-title">Kies je <em>training</em></h1></div>' +
+      '<div class="pickdate"><label for="pick-date">Datum</label><input type="date" id="pick-date" max="' + t + '" value="' + pickDate + '">' +
+      (past ? '<button type="button" class="btn small" id="pick-today">Vandaag</button>' : '') + '</div>' +
+      '<p class="note-line">' + (past ? 'Je vult een training van ' + esc(fmtD(pickDate)) + ' in. Kies welke.' : 'Een training van een vorige dag invullen? Kies eerst de datum.') + '</p>' +
       '<div class="picker">' + days().map(d => {
-        const n = flatItems(d).filter(f => f.kind === 'main').length;
-        return '<button type="button" class="pick" data-start="' + esc(d.id) + '"><span class="big">' + esc(d.id) + '</span><span><b>' + esc(d.name) + '</b><small>' + n + ' oefeningen · normaal op ' + WD_L[d.weekday] + '</small></span>' + (sug.includes(d.id) ? '<span class="pill done">Vandaag</span>' : '') + '</button>';
+        const n = flatItems(d).filter(f => f.kind === 'main').length, has = sessHasDone(getSess(pickDate, d.id));
+        return '<button type="button" class="pick" data-start="' + esc(d.id) + '" data-date="' + pickDate + '"><span class="big">' + esc(d.id) + '</span><span><b>' + esc(d.name) + '</b><small>' + n + ' oefeningen · normaal op ' + WD_L[d.weekday] + '</small></span>' + (has ? '<span class="pill done">Ingevuld</span>' : sug.includes(d.id) ? '<span class="pill done">Vandaag</span>' : '') + '</button>';
       }).join('') + '</div></section>';
+    $('#pick-date').addEventListener('change', ev => { const v = ev.target.value; pickDate = v && v <= t ? v : t; renderPicker(); });
+    const pt = $('#pick-today'); if (pt) pt.addEventListener('click', () => { pickDate = t; renderPicker(); });
   }
 
   /* --- focus card --- */
@@ -393,7 +422,7 @@
       if (e.done[i] && !(e.sets[i] >= 0) && it.repsMin != null) e.sets[i] = it.repsMin;
       commitEntry(A.date, A.day, it, e);
       if (e.done[i]) {
-        if (f.kind === 'main') startRest(it);
+        if (f.kind === 'main' && A.date >= todayStr()) startRest(it);
         const nxt = nextFocus(dayById(A.day), it.id);
         if (nxt && nxt !== it.id) { A.focus = nxt; save(); renderTrain(); toast('Volgende: ' + LIB[findItem(dayById(A.day), nxt).it.ex].name); return; }
       }
@@ -555,7 +584,7 @@
   /* --- screen wake lock --- */
   let wake = null;
   async function syncWake() {
-    const want = route === 'train' && !!S.active && S.settings.wake && document.visibilityState === 'visible';
+    const want = route === 'train' && !!S.active && S.active.date >= todayStr() && S.settings.wake && document.visibilityState === 'visible';
     const ind = $('#wake-ind');
     if (want && !wake && 'wakeLock' in navigator) {
       try { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; const i2 = $('#wake-ind'); if (i2) i2.classList.remove('on'); }); }
@@ -587,14 +616,16 @@
       return '<article class="card">' + head + chartSVG(it, rows) +
         '<p class="note-line">Geel vlak: je doelzone (' + repsText(it) + ' reps × ' + it.sets + ' sets).</p>' +
         '<div class="tbl"><table class="htab"><thead><tr><th>Datum</th><th>Week</th><th>Reps per set</th><th>Totaal</th></tr></thead><tbody>' +
-        rows.slice().reverse().map(r => '<tr><td>' + esc(fmtD(r.date)) + '</td><td>' + weekNo(r.date) + '</td><td>' + r.sets.map((v, i) => r.done[i] ? v : '–').join(' · ') + '</td><td>' + r.total + '</td></tr>').join('') +
-        '</tbody></table></div></article>';
+        rows.slice().reverse().map(r => '<tr data-open="' + esc(r.date) + '" tabindex="0"><td>' + esc(fmtD(r.date)) + '</td><td>' + weekNo(r.date) + '</td><td>' + r.sets.map((v, i) => r.done[i] ? v : '–').join(' · ') + '</td><td>' + r.total + '</td></tr>').join('') +
+        '</tbody></table></div><p class="note-line">Tik op een datum om die training aan te passen.</p></article>';
     });
     main.innerHTML = '<section class="screen"><div><p class="h-eyebrow">' + esc(S.program.name) + '</p><h1 class="h-title">Geschiedenis</h1></div>' +
       '<div class="tiles"><div class="tile"><b>' + sessions.length + '</b><span>trainingen</span></div><div class="tile"><b>' + clamp(weekNo(todayStr()), 0, S.program.weeks) + '/' + S.program.weeks + '</b><span>week</span></div><div class="tile"><b>' + (lastS ? esc(fmtShort(lastS.date)) : '–') + '</b><span>laatste training</span></div></div>' +
       '<div class="seg" role="group" aria-label="Dag">' + days().map(x => '<button type="button" data-hday="' + esc(x.id) + '" aria-pressed="' + (x.id === histDay) + '">Dag ' + esc(x.id) + '</button>').join('') + '</div>' +
       cards.join('') + '</section>';
     $$('[data-hday]', main).forEach(b => b.addEventListener('click', () => { histDay = b.dataset.hday; renderHist(); }));
+    const openRow = tr => { const dt = tr.dataset.open, dd = dayById(histDay); if (!dd) return; stopRest(); S.active = { day: dd.id, date: dt, focus: flatItems(dd)[0] && flatItems(dd)[0].it.id, from: 'hist' }; delSess = false; save(); go('train'); };
+    $$('tr[data-open]', main).forEach(tr => { tr.addEventListener('click', () => openRow(tr)); tr.addEventListener('keydown', ev => { if (ev.key === 'Enter') openRow(tr); }); });
   }
   function codeOf(d, it) { const f = flatItems(d).find(x => x.it.id === it.id); return f ? f.code : ''; }
   function chartSVG(it, rows) {
