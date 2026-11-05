@@ -216,7 +216,7 @@ const POSES = {
       kneeHint: [1, -0.3], toe: -50 };
   },
   facepull(p) {
-    return leanRings(p, { A: [200, F - 4], top: 115, up: 22, fwd: 12, elbow: [-1, -0.2] });
+    return leanRings(p, { A: [200, F - 4], top: 112, up: 12, fwd: 10, elbow: [-1, -0.2] });
   },
   ringcurl(p) {
     return leanRings(p, { A: [200, F - 4], top: 112, up: 18, fwd: 22, elbow: [1, 0.3] });

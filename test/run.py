@@ -43,9 +43,12 @@ try:
         pg.screenshot(path=OUT + '08_after_tick.png', full_page=False)
         # alle sets van de oefening afvinken -> dichtvouwen, niet naar een andere oefening springen
         pg.screenshot(path=OUT + '08a_before_complete.png', full_page=False)
-        while pg.locator('#sets .srow:not(.done) [data-act=tick]').count():
+        while pg.locator('#sets .srow:not(.done) [data-act=tick]').count() > 1:
             pg.locator('#sets .srow:not(.done) [data-act=tick]').first.click(); pg.wait_for_timeout(150)
+        last = pg.locator('#sets .srow:not(.done) [data-act=tick]').first
+        last.scroll_into_view_if_needed()
         y0 = pg.evaluate('document.querySelector("#focus").getBoundingClientRect().top')
+        pg.evaluate('document.querySelector("#sets .srow:not(.done) [data-act=tick]").click()')
         print('focus right after last set:', pg.evaluate('__bold.state.active.focus'))
         pg.wait_for_timeout(1000)
         print('focus after collapse:', pg.evaluate('__bold.state.active.focus'), 'row done:', pg.evaluate('document.querySelector(\'[data-x="A.pikepush"]\').className'),
