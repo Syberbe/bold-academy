@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.1.3';
+  const APP_VERSION = '0.1.4';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -366,7 +366,7 @@
 
   /* --- one exercise open at a time; the tapped row keeps its place on screen --- */
   let collapseT = null;
-  function setOpen(id, anchorId) {
+  function setOpen(id, anchorId, toNext) {
     const A = S.active; if (!A) return;
     clearTimeout(collapseT);
     const sel = '[data-x="' + anchorId + '"]';
@@ -374,10 +374,18 @@
     A.focus = id; save(); renderTrain();
     const after = anchorId ? main.querySelector(sel) : null;
     if (after && top0 != null) {
-      const delta = after.getBoundingClientRect().top - top0, de = document.documentElement;
-      const short = window.scrollY + delta - (de.scrollHeight - window.innerHeight);
-      if (short > 0) { const sp = document.createElement('div'); sp.className = 'spacer'; sp.style.height = Math.ceil(short) + 'px'; main.querySelector('.screen').appendChild(sp); }
-      window.scrollBy(0, delta);
+      const delta = after.getBoundingClientRect().top - top0;
+      roomFor(delta); window.scrollBy(0, delta);
+    }
+    const tb0 = document.querySelector('.topbar'), minTop0 = (tb0 ? tb0.getBoundingClientRect().bottom : 0) + 10;
+    if (!id && toNext) {
+      // after finishing an exercise: glide to the first exercise that is not done yet (or to the top)
+      const nx = main.querySelector('.qitem:not(.done)');
+      if (nx) {
+        const g = nx.closest('.qgroup'), ref = g && g.querySelector('.qitem, .card') === nx ? g : nx;
+        const dy = ref.getBoundingClientRect().top - minTop0;
+        roomFor(dy); window.scrollBy({ top: dy, behavior: REDUCE ? 'auto' : 'smooth' });
+      } else window.scrollTo({ top: 0, behavior: REDUCE ? 'auto' : 'smooth' });
     }
     if (id) {
       const card = $('#focus'), tb = document.querySelector('.topbar');
@@ -386,6 +394,14 @@
         if (Math.abs(top - minTop) > 24) window.scrollBy({ top: top - minTop, behavior: REDUCE ? 'auto' : 'smooth' });
       }
     }
+  }
+  // make sure the page is long enough to scroll by dy (adds empty space at the bottom if needed)
+  function roomFor(dy) {
+    const de = document.documentElement, short = window.scrollY + dy - (de.scrollHeight - window.innerHeight);
+    if (short <= 0) return;
+    let sp = main.querySelector('.spacer');
+    if (!sp) { sp = document.createElement('div'); sp.className = 'spacer'; sp.setAttribute('aria-hidden', 'true'); main.querySelector('.screen').appendChild(sp); }
+    sp.style.height = (parseFloat(sp.style.height) || 0) + Math.ceil(short) + 'px';
   }
   const REDUCE = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   function refreshInPlace(f) {
@@ -467,7 +483,7 @@
       if (e.done[i]) {
         if (f.kind === 'main' && A.date >= todayStr()) startRest(it);
         if (complete) collapseT = setTimeout(() => {
-          if (S.active === A && A.focus === it.id && route === 'train' && doneCount(entryFor(A.date, A.day, it)) >= it.sets) setOpen(null, it.id);
+          if (S.active === A && A.focus === it.id && route === 'train' && doneCount(entryFor(A.date, A.day, it)) >= it.sets) setOpen(null, it.id, true);
         }, 700);
       }
     } else {

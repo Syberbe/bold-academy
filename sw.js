@@ -1,5 +1,5 @@
 /* BOLD Academy service worker: app-shell offline beschikbaar */
-const CACHE = 'bold-0.1.3-84a9f3d2';
+const CACHE = 'bold-0.1.4-499a0e49';
 const ASSETS = [
  "./",
  "./index.html",
