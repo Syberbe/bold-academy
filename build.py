@@ -55,7 +55,8 @@ MANIFEST = {
 SW = """/* BOLD Academy service worker: app-shell offline beschikbaar */
 const CACHE = 'bold-%(ver)s';
 const ASSETS = %(assets)s;
-self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS))); });
+// altijd verse bestanden ophalen (niet uit de browsercache), zodat een update echt de nieuwe versie bewaart
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' }))))); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('bold-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
