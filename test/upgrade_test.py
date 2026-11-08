@@ -1,8 +1,9 @@
 """Simuleer de echte update: oude versie (0.2.0) met bestaande logs -> nieuwe versie via 'Vernieuwen'."""
 import json, os, shutil, subprocess, sys, time
 from playwright.sync_api import sync_playwright
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out', 'upg-site')
-OLD = '/tmp/claude-0/ghp'                      # gepubliceerde 0.2.0
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.join(HERE, 'out', 'upg-site')
+OLD = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', '..', 'gh-pages')  # map met de vorige gepubliceerde versie (checkout van gh-pages)
 NEW = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dist')
 def serve(src):
     if os.path.exists(ROOT): shutil.rmtree(ROOT)
@@ -22,7 +23,7 @@ try:
         pg.on('pageerror', lambda e: errs.append(str(e)))
         # gegevens klaarzetten zoals ze nu op de gsm staan (logs zonder 'ex'), vóór de app opstart
         pg.goto('http://localhost:8790/README.md')
-        prog = subprocess.run(['node', '-e', 'global.window={};require("/tmp/claude-0/ghp/js/data.js");process.stdout.write(JSON.stringify(window.BoldData.DEFAULT_PROGRAM))'], capture_output=True, text=True).stdout
+        prog = subprocess.run(['node', '-e', 'global.window={};require(process.argv[1] + "/js/data.js");process.stdout.write(JSON.stringify(window.BoldData.DEFAULT_PROGRAM))', os.path.abspath(OLD)], capture_output=True, text=True).stdout
         state = {'version': 1, 'program': json.loads(prog), 'sessions': sessions, 'settings': {'wake': True, 'sound': True}, 'active': None}
         pg.evaluate('s => localStorage.setItem("bold.v1", s)', json.dumps(state))
         pg.goto('http://localhost:8790/'); pg.wait_for_timeout(1500)
@@ -32,9 +33,14 @@ try:
         before = json.loads(pg.evaluate('localStorage.getItem("bold.v1")'))
         # nieuwe versie op dezelfde plek zetten, zoals GitHub Pages doet
         serve(NEW)
-        pg.reload(); pg.wait_for_timeout(2500)
+        pg.reload(); pg.wait_for_timeout(800)
+        pg.evaluate('navigator.serviceWorker.getRegistration().then(r => r.update())')  # zoals de browser doet bij openen
         toast = pg.locator('text=Vernieuwen')
-        print('update toast:', toast.count())
+        for _ in range(30):
+            if toast.count(): break
+            pg.wait_for_timeout(500)
+        print('update toast:', toast.count(), pg.evaluate('navigator.serviceWorker.getRegistration().then(r => [!!r.active, !!r.waiting, !!r.installing])'),
+              pg.evaluate('fetch("sw.js", {cache: "no-store"}).then(r => r.text()).then(t => t.split("\\n")[1])'))
         if toast.count():
             toast.first.click(); pg.wait_for_timeout(2500)
         print('caches:', pg.evaluate('caches.keys()'))
@@ -51,10 +57,10 @@ try:
         pg.click('[data-hday=B]'); pg.wait_for_timeout(400)
         card = pg.locator('article.card', has_text='Pelican')
         print('pelican rows on B:', card.locator('tbody tr').all_inner_texts())
-        card.screenshot(path='/tmp/pelican_hist.png')
+        card.screenshot(path=os.path.join(HERE, 'out', 'upg_pelican_hist.png'))
         pg.click('[data-hday=C]'); pg.wait_for_timeout(300)
         print('ringpush rows on C:', pg.locator('article.card', has_text='Ring push').locator('tbody tr').all_inner_texts())
-        pg.locator('article.card', has_text='Ring push').screenshot(path='/tmp/ringpush_hist.png')
+        pg.locator('article.card', has_text='Ring push').screenshot(path=os.path.join(HERE, 'out', 'upg_ringpush_hist.png'))
         pg.click('[data-tab=train]'); pg.wait_for_timeout(300)
         if pg.locator('#finish').count(): pg.click('#finish'); pg.wait_for_timeout(300); pg.click('[data-tab=train]'); pg.wait_for_timeout(300)
         pg.click('[data-start=B]'); pg.wait_for_timeout(500); pg.click('[data-focus="B.pelican"]'); pg.wait_for_timeout(500)

@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.2.1';
+  const APP_VERSION = '0.2.2';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -948,6 +948,11 @@
       reg.addEventListener('updatefound', () => {
         const w = reg.installing; if (!w) return;
         w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) ask(w); });
+      });
+      // een geïnstalleerde app wordt vaak alleen hervat, niet opnieuw geopend: kijk dan ook of er een update is (hooguit om de 30 min)
+      let lastCheck = Date.now();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && Date.now() - lastCheck > 30 * 60 * 1000) { lastCheck = Date.now(); reg.update().catch(() => {}); }
       });
     }).catch(() => {});
     let reloaded = false;
