@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.2.0';
+  const APP_VERSION = '0.2.1';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -72,19 +72,42 @@
   const entryHasDone = e => !!(e && e.done && e.done.some(Boolean));
   const sessHasDone = s => !!(s && Object.values(s.items).some(entryHasDone));
 
-  function lastEntry(itemId, beforeDate) {
-    let best = null;
-    for (const s of Object.values(S.sessions)) {
-      if (s.date >= beforeDate) continue;
-      const e = s.items[itemId];
-      if (entryHasDone(e) && (!best || s.date > best.date)) best = { date: s.date, e };
+  /* Elke gelogde oefening onthoudt welke oefening (ex) en rep range (rng) het was,
+     zodat de geschiedenis per oefening over alle trainingsdagen heen loopt. */
+  function itemMeta(s, id, e) {
+    if (e && e.ex) return { ex: e.ex, rng: e.rng || null };
+    const d = dayById(s.day), f = d && findItem(d, id);
+    if (f) return { ex: f.it.ex, rng: f.it.repsMin != null ? [f.it.repsMin, f.it.repsMax] : null };
+    const guess = String(id).split('.')[1];
+    return { ex: LIB[guess] ? guess : null, rng: null };
+  }
+  function tagEntries(sessions) {
+    let n = 0;
+    for (const s of Object.values(sessions || {})) for (const [id, e] of Object.entries(s.items || {})) {
+      if (!e || e.ex) continue;
+      const m = itemMeta(s, id, null);
+      if (m.ex) { e.ex = m.ex; if (m.rng) e.rng = m.rng; n++; }
     }
-    return best;
+    return n;
+  }
+  function exHistory(ex) {
+    const out = [];
+    for (const s of Object.values(S.sessions)) for (const [id, e] of Object.entries(s.items)) {
+      if (!entryHasDone(e)) continue;
+      const m = itemMeta(s, id, e);
+      if (m.ex === ex) out.push({ date: s.date, day: s.day, id, e, rng: m.rng });
+    }
+    return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  }
+  const sameRange = (rng, it) => !rng || (rng[0] === it.repsMin && rng[1] === it.repsMax);
+  function lastEntry(it, beforeDate, anyRange) {
+    const h = exHistory(it.ex).filter(x => x.date < beforeDate && (anyRange || sameRange(x.rng, it)));
+    return h.length ? h[h.length - 1] : null;
   }
   function progression(it, date) {
     if (it.repsMin == null) return null;
-    const last = lastEntry(it.id, date);
-    if (!last) return { kind: 'first' };
+    const last = lastEntry(it, date);
+    if (!last) { const other = lastEntry(it, date, true); return other ? { kind: 'other', last: other } : { kind: 'first' }; }
     const vals = []; let allDone = true, allTop = true;
     for (let i = 0; i < it.sets; i++) {
       const d = last.e.done[i], v = last.e.sets[i];
@@ -101,11 +124,12 @@
       return e;
     }
     const sets = [], done = [];
-    const last = it.repsMin != null ? lastEntry(it.id, date) : null;
+    const last = it.repsMin != null ? (lastEntry(it, date) || lastEntry(it, date, true)) : null;
+    const fit = v => (last && !sameRange(last.rng, it) ? clamp(v, it.repsMin, it.repsMax) : v);
     for (let i = 0; i < it.sets; i++) {
       let v = null;
       if (it.repsMin != null) {
-        if (last && last.e.done[i] && last.e.sets[i] != null) v = last.e.sets[i];
+        if (last && last.e.done[i] && last.e.sets[i] != null) v = fit(last.e.sets[i]);
         else if (i > 0 && sets[i - 1] != null) v = sets[i - 1];
         else v = it.repsMin;
       }
@@ -115,12 +139,21 @@
   }
   function commitEntry(date, dayId, it, e) {
     const s = ensureSess(date, dayId);
-    s.items[it.id] = { sets: e.sets.slice(), done: e.done.slice() };
+    s.items[it.id] = { sets: e.sets.slice(), done: e.done.slice(), ex: it.ex };
+    if (it.repsMin != null) s.items[it.id].rng = [it.repsMin, it.repsMax];
     if (!sessHasDone(s) && !Object.values(s.items).some(x => x.done.some(Boolean))) { /* keep */ }
     save();
     return s.items[it.id];
   }
   const doneCount = e => e.done.filter(Boolean).length;
+
+  /* eenmalig: bestaande logs krijgen hun oefening erbij (er wordt niets verwijderd, en er blijft een kopie van daarvoor) */
+  (function upgradeLogs() {
+    const todo = Object.values(S.sessions).some(s => Object.values(s.items || {}).some(e => e && !e.ex));
+    if (!todo) return;
+    try { const raw = localStorage.getItem(KEY); if (raw && !localStorage.getItem(KEY + '.voor-0.2.1')) localStorage.setItem(KEY + '.voor-0.2.1', raw); } catch (e) {}
+    if (tagEntries(S.sessions)) saveNow();
+  })();
 
   /* ---------------- adaptive week planning ---------------- */
   function plan(today) {
@@ -257,10 +290,12 @@
     const movedNotes = pl.occ.filter(o => o.status === 'moved' && o.eff >= t).map(o => '<b>' + esc(dayById(o.day).name) + '</b> van ' + fmtD(o.planned) + ' → ' + fmtD(o.eff));
 
     /* progression overview */
-    const sugg = [];
+    const sugg = [], seen = {};
     days().forEach(d => d.blocks.forEach(b => b.items.forEach(it => {
+      const k = it.ex + '|' + it.repsMin + '-' + it.repsMax;
+      if (seen[k]) { seen[k].days.push(d.id); return; }
       const pr = progression(it, addDays(t, 1));
-      if (pr && pr.kind === 'harder') sugg.push({ d, it, pr });
+      if (pr && pr.kind === 'harder') { seen[k] = { d, it, pr, days: [d.id] }; sugg.push(seen[k]); }
     })));
     main.innerHTML = '<section class="screen">' + hero +
       '<div><p class="h-eyebrow">Week ' + clamp(weekNo(t), 1, S.program.weeks) + ' · ' + fmtShort(ws) + ' – ' + fmtShort(addDays(ws, 6)) + '</p><h2 class="sec-title">Deze week</h2></div>' +
@@ -268,7 +303,7 @@
       '<div class="legend"><span><i class="d"></i>Gedaan</span><span><i class="t"></i>Vandaag of verschoven</span><span><i></i>Gepland</span><span><i class="m"></i>Gemist</span></div>' +
       (movedNotes.length ? '<p class="note-line">Verschoven: ' + movedNotes.join(' · ') + '</p>' : '') +
       '<div><h2 class="sec-title">Klaar om zwaarder te maken</h2></div>' +
-      (sugg.length ? '<div class="card"><p class="note-line">Je haalde overal het maximum. Kies een zwaardere variant: trager tempo, ringen verder uit elkaar of lager, of gewicht erbij.</p><ul class="sugg">' + sugg.map(s => '<li><span class="tagx">Dag ' + esc(s.d.id) + '</span><div><b>' + esc(LIB[s.it.ex].name) + '</b></div><small>Vorige keer ' + s.pr.vals.join(' · ') + ' · doel ' + repsText(s.it) + ' reps</small></li>').join('') + '</ul></div>'
+      (sugg.length ? '<div class="card"><p class="note-line">Je haalde overal het maximum. Kies een zwaardere variant: trager tempo, ringen verder uit elkaar of lager, of gewicht erbij.</p><ul class="sugg">' + sugg.map(s => '<li><span class="tagx">Dag ' + s.days.map(esc).join(' · ') + '</span><div><b>' + esc(LIB[s.it.ex].name) + '</b></div><small>Vorige keer ' + s.pr.vals.join(' · ') + ' · doel ' + repsText(s.it) + ' reps</small></li>').join('') + '</ul></div>'
         : '<p class="empty">Nog niets. Haal je bij een oefening in alle sets het hoogste aantal reps, dan verschijnt ze hier.</p>') +
       '<div class="btn-row"><button type="button" class="btn" data-go="train">Andere training starten</button></div>' +
       '</section>';
@@ -439,8 +474,10 @@
     const pr = isWU ? null : progression(it, A.date);
     let target = '';
     if (pr) {
-      if (pr.kind === 'harder') target = '<div class="target up"><span class="ic">↑</span><div><b>Klaar om zwaarder te maken.</b> Vorige keer ' + pr.vals.join(' · ') + ': overal het maximum van ' + repsText(it) + '. Kies een zwaardere variant: trager tempo, ringen verder uit elkaar of lager, of gewicht erbij.</div></div>';
-      else if (pr.kind === 'plus') target = '<div class="target"><span class="ic">+1</span><div><b>Doel vandaag: ' + pr.target.join(' · ') + '.</b> Vorige keer (' + fmtShort(pr.last.date) + '): ' + pr.vals.map(v => v == null ? '–' : v).join(' · ') + '.</div></div>';
+      const when = l => fmtShort(l.date) + (l.day !== A.day ? ', dag ' + esc(l.day) : '');
+      if (pr.kind === 'harder') target = '<div class="target up"><span class="ic">↑</span><div><b>Klaar om zwaarder te maken.</b> Vorige keer (' + when(pr.last) + ') ' + pr.vals.join(' · ') + ': overal het maximum van ' + repsText(it) + '. Kies een zwaardere variant: trager tempo, ringen verder uit elkaar of lager, of gewicht erbij.</div></div>';
+      else if (pr.kind === 'plus') target = '<div class="target"><span class="ic">+1</span><div><b>Doel vandaag: ' + pr.target.join(' · ') + '.</b> Vorige keer (' + when(pr.last) + '): ' + pr.vals.map(v => v == null ? '–' : v).join(' · ') + '.</div></div>';
+      else if (pr.kind === 'other') target = '<div class="target"><span class="ic">1e</span><div><b>Eerste keer met ' + repsText(it) + ' reps.</b> Vorige keer (' + when(pr.last) + (pr.last.rng ? ', ' + pr.last.rng[0] + '–' + pr.last.rng[1] + ' reps' : '') + '): ' + pr.last.e.sets.map((v, i) => pr.last.e.done[i] && v != null ? v : '–').join(' · ') + '.</div></div>';
       else target = '<div class="target"><span class="ic">1e</span><div><b>Eerste keer.</b> Zoek een variant waarmee je binnen ' + repsText(it) + ' reps blijft.</div></div>';
     }
     const tv = isWU ? null : it.tempo.split('-');
@@ -655,16 +692,18 @@
     const d = dayById(histDay);
     const items = d ? d.blocks.flatMap(b => b.items) : [];
     const cards = items.map(it => {
-      const rows = sessions.filter(s => s.day === d.id && entryHasDone(s.items[it.id])).map(s => {
-        const e = s.items[it.id];
-        return { date: s.date, sets: e.sets.slice(0, it.sets), done: e.done.slice(0, it.sets), total: e.sets.reduce((a, v, i) => a + (e.done[i] && v ? v : 0), 0) };
+      const rows = exHistory(it.ex).filter(x => S.sessions[skey(x.date, x.day)] && sessHasDone(S.sessions[skey(x.date, x.day)])).map(x => {
+        const n = Math.max(x.e.done.length, 1);
+        return { date: x.date, day: x.day, other: !sameRange(x.rng, it), sets: x.e.sets.slice(0, n), done: x.e.done.slice(0, n), total: x.e.sets.reduce((a, v, i) => a + (x.e.done[i] && v ? v : 0), 0) };
       });
-      const head = '<div class="focus-head"><span class="code">' + esc(codeOf(d, it)) + '</span><h3 class="grow">' + esc(LIB[it.ex].name) + '</h3>' + (rows.length ? '<span class="pill">Beste ' + Math.max(...rows.map(r => r.total)) + '</span>' : '') + '</div>';
+      const own = rows.filter(r => !r.other), manyDays = new Set(rows.map(r => r.day)).size > 1 || rows.some(r => r.day !== d.id);
+      const head = '<div class="focus-head"><span class="code">' + esc(codeOf(d, it)) + '</span><h3 class="grow">' + esc(LIB[it.ex].name) + '</h3>' + (own.length ? '<span class="pill">Beste ' + Math.max(...own.map(r => r.total)) + '</span>' : '') + '</div>';
       if (!rows.length) return '<article class="card">' + head + '<p class="empty">Nog niets gelogd.</p></article>';
+      const others = [...new Set(rows.filter(r => r.other).map(r => r.day))];
       return '<article class="card">' + head + chartSVG(it, rows) +
-        '<p class="note-line">Geel vlak: je doelzone (' + repsText(it) + ' reps × ' + it.sets + ' sets).</p>' +
-        '<div class="tbl"><table class="htab"><thead><tr><th>Datum</th><th>Week</th><th>Reps per set</th><th>Totaal</th></tr></thead><tbody>' +
-        rows.slice().reverse().map(r => '<tr data-open="' + esc(r.date) + '" tabindex="0"><td>' + esc(fmtD(r.date)) + '</td><td>' + weekNo(r.date) + '</td><td>' + r.sets.map((v, i) => r.done[i] ? v : '–').join(' · ') + '</td><td>' + r.total + '</td></tr>').join('') +
+        '<p class="note-line">Geel vlak: je doelzone (' + repsText(it) + ' reps × ' + it.sets + ' sets).' + (others.length ? ' Open bolletje: dag ' + others.map(esc).join(', ') + ', met een andere rep range.' : '') + '</p>' +
+        '<div class="tbl"><table class="htab"><thead><tr><th>Datum</th>' + (manyDays ? '<th>Dag</th>' : '') + '<th>Week</th><th>Reps per set</th><th>Totaal</th></tr></thead><tbody>' +
+        rows.slice().reverse().map(r => '<tr data-open="' + esc(r.date) + '" data-day="' + esc(r.day) + '" tabindex="0"' + (r.other ? ' class="other"' : '') + '><td>' + esc(fmtD(r.date)) + '</td>' + (manyDays ? '<td><span class="dtag' + (r.day === d.id ? ' cur' : '') + '">' + esc(r.day) + '</span></td>' : '') + '<td>' + weekNo(r.date) + '</td><td>' + r.sets.map((v, i) => r.done[i] ? v : '–').join(' · ') + '</td><td>' + r.total + '</td></tr>').join('') +
         '</tbody></table></div><p class="note-line">Tik op een datum om die training aan te passen.</p></article>';
     });
     main.innerHTML = '<section class="screen"><div><p class="h-eyebrow">' + esc(S.program.name) + '</p><h1 class="h-title">Geschiedenis</h1></div>' +
@@ -672,7 +711,7 @@
       '<div class="seg" role="group" aria-label="Dag">' + days().map(x => '<button type="button" data-hday="' + esc(x.id) + '" aria-pressed="' + (x.id === histDay) + '">Dag ' + esc(x.id) + '</button>').join('') + '</div>' +
       cards.join('') + '</section>';
     $$('[data-hday]', main).forEach(b => b.addEventListener('click', () => { histDay = b.dataset.hday; renderHist(); }));
-    const openRow = tr => { const dt = tr.dataset.open, dd = dayById(histDay); if (!dd) return; stopRest(); S.active = { day: dd.id, date: dt, focus: flatItems(dd)[0] && flatItems(dd)[0].it.id, from: 'hist' }; delSess = false; save(); go('train'); };
+    const openRow = tr => { const dt = tr.dataset.open, dd = dayById(tr.dataset.day || histDay); if (!dd) return; stopRest(); S.active = { day: dd.id, date: dt, focus: flatItems(dd)[0] && flatItems(dd)[0].it.id, from: 'hist' }; delSess = false; save(); go('train'); };
     $$('tr[data-open]', main).forEach(tr => { tr.addEventListener('click', () => openRow(tr)); tr.addEventListener('keydown', ev => { if (ev.key === 'Enter') openRow(tr); }); });
   }
   function codeOf(d, it) { const f = flatItems(d).find(x => x.it.id === it.id); return f ? f.code : ''; }
@@ -689,7 +728,7 @@
     const wk = S.program.weeks;
     [1, Math.round(wk / 3), Math.round(2 * wk / 3), wk].forEach((w, i) => { s += '<text x="' + X(addDays(start, (w - 1) * 7)).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + (i === 0 ? 'start' : 'middle') + '">W' + w + '</text>'; });
     if (rows.length > 1) s += '<polyline class="ln" points="' + rows.map(r => X(r.date).toFixed(1) + ',' + Y(r.total).toFixed(1)).join(' ') + '"/>';
-    rows.forEach(r => { s += '<circle class="pt" cx="' + X(r.date).toFixed(1) + '" cy="' + Y(r.total).toFixed(1) + '" r="4"/>'; });
+    rows.forEach(r => { s += '<circle class="pt' + (r.other ? ' other' : '') + '" cx="' + X(r.date).toFixed(1) + '" cy="' + Y(r.total).toFixed(1) + '" r="4"/>'; });
     const lr = rows[rows.length - 1], lx = X(lr.date);
     s += '<text class="val" x="' + lx.toFixed(1) + '" y="' + (Y(lr.total) - 9).toFixed(1) + '" text-anchor="' + (lx > W - 40 ? 'end' : lx < Lp + 20 ? 'start' : 'middle') + '">' + lr.total + '</text>';
     return s + '</svg>';
@@ -895,6 +934,7 @@
       }
     }
     pendingImport = null; importBox = '';
+    tagEntries(S.sessions);
     saveNow();
     toast(replace ? 'Back-up ingeladen.' : added + ' trainingen toegevoegd aan je logboek.');
   }
