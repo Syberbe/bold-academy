@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.2.3';
+  const APP_VERSION = '0.2.4';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -64,7 +64,10 @@
   function findItem(day, id) { return flatItems(day).find(f => f.it.id === id); }
   const repsText = it => it.repsMin === it.repsMax ? String(it.repsMin) : it.repsMin + '–' + it.repsMax;
   const restText = s => s % 60 === 0 ? (s / 60) + ' min' : Math.floor(s / 60) + ':' + pad2(s % 60) + ' min';
-  function weekNo(date) { return Math.floor(diffDays(S.program.startDate, date) / 7) + 1; }
+  /* weken zijn kalenderweken (ma–zo); week 1 is de week waarin je startdatum valt */
+  const progStart = () => weekStartOf(S.program.startDate);
+  const progEnd = () => addDays(progStart(), S.program.weeks * 7 - 1);
+  function weekNo(date) { return Math.floor(diffDays(progStart(), weekStartOf(date)) / 7) + 1; }
 
   /* ---------------- sessions ---------------- */
   const skey = (date, day) => date + '|' + day;
@@ -162,7 +165,7 @@
      - een gemiste training schuift alleen naar een vrije dag in dezelfde week, nooit naar de volgende week;
      - een verschoven training kun je overslaan (S.skips). */
   function plan(today) {
-    const P = S.program, start = P.startDate, end = addDays(start, P.weeks * 7 - 1);
+    const P = S.program, start = P.startDate, end = progEnd();
     const ws = weekStartOf(today);
     let from = addDays(ws, -7), to = addDays(ws, 13);
     if (from < start) from = start;
@@ -740,7 +743,7 @@
     const W = 320, H = 150, Lp = 30, R = 18, T = 16, B = 26, n = it.sets;
     const lo = it.repsMin * n, hi = it.repsMax * n;
     const ymax = Math.max(10, Math.ceil(Math.max(hi, ...rows.map(r => r.total)) * 1.12 / 5) * 5);
-    const start = S.program.startDate, span = Math.max(1, S.program.weeks * 7 - 1);
+    const start = progStart(), span = Math.max(1, S.program.weeks * 7 - 1);
     const X = dt => Lp + clamp(diffDays(start, dt) / span, 0, 1) * (W - Lp - R);
     const Y = v => T + (1 - v / ymax) * (H - T - B);
     let s = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Totaal aantal reps per training voor ' + esc(LIB[it.ex].name) + '">';
