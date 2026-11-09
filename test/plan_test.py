@@ -17,7 +17,8 @@ def run(pg, when, label):
     chips = pg.evaluate('[...document.querySelectorAll(".wd")].map(w => w.querySelector(".dn").textContent + w.querySelector(".dd").textContent + ":" + [...w.querySelectorAll(".chip")].map(c => c.className.replace("chip ","") + "/" + c.textContent).join(","))')
     hero = pg.evaluate('document.querySelector(".hero h2").textContent + " | " + [...document.querySelectorAll(".hero .btn")].map(b => b.textContent).join(" + ")')
     moved = pg.evaluate('[...document.querySelectorAll(".moved li span")].map(e => e.textContent)')
-    print(label, '\n  week :', ' '.join(chips), '\n  hero :', hero, '\n  moved:', moved)
+    pill = pg.evaluate('document.getElementById("weekpill").textContent + " | " + document.querySelector(".h-eyebrow:not(.hero .h-eyebrow)") .textContent')
+    print(label, pill, '\n  week :', ' '.join(chips), '\n  hero :', hero, '\n  moved:', moved)
 try:
     with sync_playwright() as p:
         b = p.chromium.launch(args=['--use-gl=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'])
