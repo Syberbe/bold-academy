@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { LIBRARY: LIB, LABELS, DEFAULT_PROGRAM } = window.BoldData;
-  const APP_VERSION = '0.2.2';
+  const APP_VERSION = '0.2.3';
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -30,7 +30,7 @@
 
   /* ---------------- storage ---------------- */
   const KEY = 'bold.v1';
-  function defaultState() { return { version: 1, program: clone(DEFAULT_PROGRAM), sessions: {}, settings: { wake: true, sound: true }, active: null }; }
+  function defaultState() { return { version: 1, program: clone(DEFAULT_PROGRAM), sessions: {}, settings: { wake: true, sound: true }, active: null, skips: {} }; }
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
@@ -39,6 +39,7 @@
     return defaultState();
   }
   let S = load();
+  if (!S.skips || typeof S.skips !== 'object') S.skips = {};
   let saveT = null, storageWarned = false;
   function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 120); }
   function saveNow() {
@@ -156,6 +157,10 @@
   })();
 
   /* ---------------- adaptive week planning ---------------- */
+  /* Weekplanning. Elke week (ma–zo) staat op zichzelf:
+     - een training telt voor zijn week, op welke dag van die week je ze ook deed;
+     - een gemiste training schuift alleen naar een vrije dag in dezelfde week, nooit naar de volgende week;
+     - een verschoven training kun je overslaan (S.skips). */
   function plan(today) {
     const P = S.program, start = P.startDate, end = addDays(start, P.weeks * 7 - 1);
     const ws = weekStartOf(today);
@@ -165,23 +170,37 @@
     const occ = [];
     for (let d = from; d <= to; d = addDays(d, 1)) days().forEach(day => { if (day.weekday === wdOf(d)) occ.push({ day: day.id, planned: d }); });
     occ.sort((a, b) => a.planned < b.planned ? -1 : a.planned > b.planned ? 1 : 0);
-    const plannedDates = new Set(occ.map(o => o.planned));
-    const sess = Object.values(S.sessions).filter(s => sessHasDone(s) && s.date <= today && s.date >= addDays(from, -6)).sort((a, b) => a.date < b.date ? -1 : 1);
-    const used = new Set(), movedTo = new Set();
+    const lo0 = weekStartOf(from);
+    const sess = Object.values(S.sessions).filter(s => sessHasDone(s) && s.date <= today && s.date >= lo0).sort((a, b) => a.date < b.date ? -1 : 1);
+    const used = new Set(), skips = S.skips || {};
+    // 1. trainingen koppelen aan hun week
     for (const o of occ) {
-      const lo = weekStartOf(o.planned), hi = addDays(o.planned, 7);
-      const m = sess.find(s => !used.has(s) && s.day === o.day && s.date >= lo && s.date < hi && s.date <= today);
-      if (m) { used.add(m); o.status = 'done'; o.eff = m.date; continue; }
+      const lo = weekStartOf(o.planned), hi = addDays(lo, 7);
+      const m = sess.find(s => !used.has(s) && s.day === o.day && s.date >= lo && s.date < hi);
+      if (m) { used.add(m); o.status = 'done'; o.eff = m.date; }
+      else if (skips[o.day + '|' + o.planned]) { o.status = 'skipped'; o.eff = o.planned; }
+    }
+    // 2. wat open staat: gepland, vandaag, verschoven binnen de week of gemist
+    const busy = new Set(sess.map(s => s.date));
+    occ.forEach(o => { if (!o.status) busy.add(o.planned); });
+    const movedTo = new Set();
+    for (const o of occ) {
+      if (o.status) continue;
+      const hi = addDays(weekStartOf(o.planned), 7);
       if (o.planned > today) { o.status = 'upcoming'; o.eff = o.planned; continue; }
       if (o.planned === today) { o.status = 'todo'; o.eff = today; continue; }
-      if (hi <= today) { o.status = 'missed'; o.eff = o.planned; continue; }
       let target = null;
-      for (let d = today; d < hi; d = addDays(d, 1)) { if (!plannedDates.has(d) && !movedTo.has(d)) { target = d; break; } }
+      for (let d = today; d < hi; d = addDays(d, 1)) { if (!busy.has(d) && !movedTo.has(d)) { target = d; break; } }
       if (target) { movedTo.add(target); o.status = 'moved'; o.eff = target; }
       else { o.status = 'missed'; o.eff = o.planned; }
     }
     const extra = sess.filter(s => !used.has(s) && s.date >= from).map(s => ({ day: s.day, planned: s.date, eff: s.date, status: 'done', extra: true }));
     return { occ: occ.concat(extra), from, to, start, end };
+  }
+  function skipOcc(day, planned) {
+    const k = day + '|' + planned;
+    S.skips[k] = true; save(); render();
+    toast('Overgeslagen: ' + (dayById(day) ? dayById(day).name : 'training') + '.', { label: 'Ongedaan maken', fn: () => { delete S.skips[k]; save(); render(); } });
   }
 
   /* ---------------- UI shell ---------------- */
@@ -261,7 +280,8 @@
       const o = todays[0], d = dayById(o.day);
       const sub = o.status === 'moved' ? 'Verschoven van ' + fmtD(o.planned) : 'Dag ' + o.day;
       hero = heroHtml(d.name, flatItems(d).filter(f => f.kind === 'main').length + ' oefeningen · warm-up ' + d.warmup.length + ' oefeningen', sub,
-        '<button type="button" class="btn primary" data-start="' + o.day + '">Start training</button>');
+        '<button type="button" class="btn primary" data-start="' + o.day + '">Start training</button>' +
+        (o.status === 'moved' ? '<button type="button" class="btn" data-skip="' + esc(o.day + '|' + o.planned) + '">Overslaan</button>' : ''));
     } else if (doneToday.length) {
       const d = dayById(doneToday[0].day);
       const nx = upcoming[0];
@@ -277,8 +297,8 @@
       const chips = [];
       pl.occ.forEach(o => {
         if (o.eff === d) {
-          const cls = o.status === 'done' ? 'done' : (o.status === 'moved' ? 'moved-in' : (o.status === 'missed' ? 'missed' : (d === t ? 'todo' : 'upcoming')));
-          const lab = o.status === 'done' ? 'Gedaan' : o.status === 'moved' ? 'Verschoven van ' + fmtD(o.planned) : o.status === 'missed' ? 'Gemist' : 'Gepland';
+          const cls = o.status === 'done' ? 'done' : (o.status === 'moved' ? 'moved-in' : (o.status === 'missed' || o.status === 'skipped' ? 'missed' : (d === t ? 'todo' : 'upcoming')));
+          const lab = o.status === 'done' ? 'Gedaan' : o.status === 'moved' ? 'Verschoven van ' + fmtD(o.planned) : o.status === 'missed' ? 'Gemist' : o.status === 'skipped' ? 'Overgeslagen' : 'Gepland';
           chips.push('<span class="chip ' + cls + '" title="' + esc(lab) + '">' + (o.status === 'moved' ? '↻' : '') + esc(o.day) + '</span>');
         } else if (o.planned === d && o.status === 'moved') {
           chips.push('<span class="chip missed" title="Verschoven naar ' + esc(fmtD(o.eff)) + '">' + esc(o.day) + '</span>');
@@ -287,7 +307,7 @@
       const act = acts.filter(a => a.weekday === wdOf(d) && a.name.trim()).map(a => esc(a.name.trim())).join(', ');
       strip.push('<div class="wd' + (d === t ? ' today' : '') + '"><span class="dn">' + WD_S[wdOf(d)] + '</span><span class="dd">' + parseD(d).getDate() + '</span>' + chips.join('') + (act ? '<span class="act">' + act + '</span>' : '') + '</div>');
     }
-    const movedNotes = pl.occ.filter(o => o.status === 'moved' && o.eff >= t).map(o => '<b>' + esc(dayById(o.day).name) + '</b> van ' + fmtD(o.planned) + ' → ' + fmtD(o.eff));
+    const movedNotes = pl.occ.filter(o => o.status === 'moved' && o.eff >= t).map(o => '<li><span><b>' + esc(dayById(o.day).name) + '</b> van ' + esc(fmtShort(o.planned)) + ' → ' + esc(WD_L[wdOf(o.eff)]) + ' ' + esc(fmtShort(o.eff)) + '</span><button type="button" class="btn small" data-skip="' + esc(o.day + '|' + o.planned) + '">Overslaan</button></li>');
 
     /* progression overview */
     const sugg = [], seen = {};
@@ -301,7 +321,7 @@
       '<div><p class="h-eyebrow">Week ' + clamp(weekNo(t), 1, S.program.weeks) + ' · ' + fmtShort(ws) + ' – ' + fmtShort(addDays(ws, 6)) + '</p><h2 class="sec-title">Deze week</h2></div>' +
       '<div class="week" role="list">' + strip.join('') + '</div>' +
       '<div class="legend"><span><i class="d"></i>Gedaan</span><span><i class="t"></i>Vandaag of verschoven</span><span><i></i>Gepland</span><span><i class="m"></i>Gemist</span></div>' +
-      (movedNotes.length ? '<p class="note-line">Verschoven: ' + movedNotes.join(' · ') + '</p>' : '') +
+      (movedNotes.length ? '<div class="moved"><p class="note-line">Verschoven binnen deze week. Lukt het niet, sla de training dan over: hij schuift nooit door naar volgende week.</p><ul>' + movedNotes.join('') + '</ul></div>' : '') +
       '<div><h2 class="sec-title">Klaar om zwaarder te maken</h2></div>' +
       (sugg.length ? '<div class="card"><p class="note-line">Je haalde overal het maximum. Kies een zwaardere variant: trager tempo, ringen verder uit elkaar of lager, of gewicht erbij.</p><ul class="sugg">' + sugg.map(s => '<li><span class="tagx">Dag ' + s.days.map(esc).join(' · ') + '</span><div><b>' + esc(LIB[s.it.ex].name) + '</b></div><small>Vorige keer ' + s.pr.vals.join(' · ') + ' · doel ' + repsText(s.it) + ' reps</small></li>').join('') + '</ul></div>'
         : '<p class="empty">Nog niets. Haal je bij een oefening in alle sets het hoogste aantal reps, dan verschijnt ze hier.</p>') +
@@ -313,7 +333,8 @@
   }
   main.addEventListener('click', e => {
     const g = e.target.closest('[data-go]'); if (g) { if (g.dataset.go === 'train' && !S.active) { route = 'train'; render(); return; } go(g.dataset.go); return; }
-    const st = e.target.closest('[data-start]'); if (st) { startSession(st.dataset.start, st.dataset.date || todayStr()); }
+    const st = e.target.closest('[data-start]'); if (st) { startSession(st.dataset.start, st.dataset.date || todayStr()); return; }
+    const sk = e.target.closest('[data-skip]'); if (sk) { const [d, p] = sk.dataset.skip.split('|'); skipOcc(d, p); }
   });
 
   /* ---------------- TRAINING ---------------- */
